@@ -53,6 +53,8 @@ public sealed class ImageService
             await resizedImage.SaveAsync(thumbnailPath);
 
             thumbnailPaths.Add(thumbnailFileName);
+
+            await Task.Delay(5000);
         }
 
         return thumbnailPaths;
