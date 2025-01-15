@@ -1,4 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using System.Collections.Concurrent;
+using System.Threading.Channels;
+using ThumbnailGenerator.Models;
 using ThumbnailGenerator.Services;
 
 namespace ThumbnailGenerator.Controllers;
@@ -7,7 +10,9 @@ namespace ThumbnailGenerator.Controllers;
 [ApiController]
 public sealed class ThumbnailsController(
     ImageService imageService, 
-    LinkGenerator linkGenerator) : ControllerBase
+    LinkGenerator linkGenerator,
+    Channel<ThumbnailGenerationJob> channel,
+    ConcurrentDictionary<string, ThumbnailGenerationStatus> statusDictionary) : ControllerBase
 {
     private readonly string _uploadDirectory = "uploads";
 
@@ -24,20 +29,44 @@ public sealed class ThumbnailsController(
             return BadRequest("Invalid image file. Only JPG, PNG, and GIF formats are supported!");
         }
 
-        var folderName = Guid.NewGuid().ToString();
-        var folderPath = Path.Combine(_uploadDirectory, "images", folderName);
-        var fileName = $"{folderName}{Path.GetExtension(file.FileName)}";
+        var uniqueId = Guid.NewGuid().ToString();
+        var folderPath = Path.Combine(_uploadDirectory, "images", uniqueId);
+        var fileName = $"{uniqueId}{Path.GetExtension(file.FileName)}";
 
         var originalFilePath = await imageService.SaveOriginalImageAsync(file, folderPath, fileName);
-        await imageService.GenerateThumbnailsAsync(originalFilePath, folderPath, folderName);
 
-        var thumbnailLinks = ImageService.ThumbnailWidths.ToDictionary(
-            width => $"w{width}",
-            width => GetFullyQualifiedUrl(nameof(GetImage), new { id = folderName, width}));
+        var job = new ThumbnailGenerationJob(uniqueId, originalFilePath, folderPath);
+        await channel.Writer.WriteAsync(job);
 
-        thumbnailLinks.Add("original", GetFullyQualifiedUrl(nameof(GetImage), new {id = folderName }));
+        statusDictionary[uniqueId] = ThumbnailGenerationStatus.Queued;
 
-        return Ok(new { id = folderName, links =  thumbnailLinks });
+        var statusUrl = GetFullyQualifiedUrl(nameof(GetStatus), new { id = uniqueId });
+
+        return Accepted(statusUrl, new { id = uniqueId, sttaus =  ThumbnailGenerationStatus.Queued.ToString() });
+    }
+
+    [HttpGet("{id}/status")]
+    public IActionResult GetStatus(string id)
+    {
+        if(statusDictionary.TryGetValue(id, out var status) == false)
+        {
+            return NotFound();
+        }
+
+        var response = new {id, status = status.ToString(), links= new Dictionary<string, string>() };
+
+        if(status == ThumbnailGenerationStatus.Completed)
+        {
+            var thumbnailLinks = ImageService.ThumbnailWidths.ToDictionary(
+                width => $"w{width}",
+                width => GetFullyQualifiedUrl(nameof(GetImage), new { id, width }));
+
+            thumbnailLinks.Add("original", GetFullyQualifiedUrl(nameof(GetImage), new { id }));
+
+            response = response with { links = thumbnailLinks };
+        }
+
+        return Ok(response);
     }
 
     [HttpGet("{id}")]

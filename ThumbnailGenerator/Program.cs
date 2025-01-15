@@ -11,7 +11,7 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-builder.Services.AddScoped<ImageService>();
+builder.Services.AddSingleton<ImageService>();
 
 builder.Services.AddSingleton(_ =>
 {
@@ -23,6 +23,8 @@ builder.Services.AddSingleton(_ =>
     return channel;
 });
 builder.Services.AddSingleton<ConcurrentDictionary<string, ThumbnailGenerationStatus>>();
+
+builder.Services.AddHostedService<ThumbnailGenerationService>();
 
 var app = builder.Build();
 
